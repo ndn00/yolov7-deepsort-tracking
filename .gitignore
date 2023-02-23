@@ -2,3 +2,7 @@
 traced_model.pt
 ./weights/yolov7x.pt
 /weights/yolov7x.pt
+*.mp4
+*.avi
+*.csv
+__pycache__
