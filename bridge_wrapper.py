@@ -59,7 +59,7 @@ class YOLOv7_DeepSORT:
         self.tracker = Tracker(metric) # initialize tracker
 
 
-    def track_video(self,video:str, output:str, outcsv:str, skip_frames:int=0, show_live:bool=False, count_objects:bool=False, verbose:int = 0):
+    def track_video(self,video:str, output:str, skip_frames:int=0, show_live:bool=False, count_objects:bool=False, verbose:int = 0):
         '''
         Track any given webcam or video
         args: 
@@ -69,7 +69,6 @@ class YOLOv7_DeepSORT:
             show_live: Whether to show live video tracking. Press the key 'q' to quit
             count_objects: count objects being tracked on screen
             verbose: print details on the screen allowed values 0,1,2
-            outcsv: path to output csv file
         '''
         try: # begin video capture
             vid = cv2.VideoCapture(int(video))
@@ -86,10 +85,10 @@ class YOLOv7_DeepSORT:
 
         frame_num = 0
 
-        all_ids={}
+        unique_track_ids={}
         for _, cls in self.class_names.items():
-            all_ids[cls]=set([])
-        print(all_ids)
+            unique_track_ids[cls]=set([])
+        print(unique_track_ids)
 
         while True: # while video is running
             return_value, frame = vid.read()
@@ -155,7 +154,7 @@ class YOLOv7_DeepSORT:
                 bbox = track.to_tlbr()
                 class_name = track.get_class()
 
-                all_ids[class_name].add(track.track_id)
+                unique_track_ids[class_name].add(track.track_id)
 
                 color = colors[int(track.track_id) % len(colors)]  # draw bbox on screen
                 color = [i * 255 for i in color]
@@ -181,15 +180,18 @@ class YOLOv7_DeepSORT:
             if show_live:
                 cv2.imshow("Output Video", result)
                 if cv2.waitKey(1) & 0xFF == ord('q'): break
-        if verbose >= 1:
-            for _, cls in self.class_names.items():
-                print("{} objects:\t{}\n".format(cls, len(all_ids[cls])))
 
-        if outcsv:
-            with open(outcsv, 'a+') as f:
-                if(os.stat(outcsv).st_size == 0): # New file
-                    f.write("class,count\n") #header
-                for _, cls in self.class_names.items():
-                    f.write("{},{}\n".format(cls, len(all_ids[cls])))
+        count_by_class = dict(zip(self.class_names.values(), map(lambda cls: len(unique_track_ids[cls]), self.class_names.values())))
+        if verbose >= 1:
+            print(count_by_class)
+
+        # if outcsv:
+        #     with open(outcsv, 'a+') as f:
+        #         if(os.stat(outcsv).st_size == 0): # New file
+        #             f.write("class,count\n") #header
+        #         for _, cls in self.class_names.items():
+        #             f.write("{},{}\n".format(cls, len(unique_track_ids[cls])))
 
         cv2.destroyAllWindows()
+
+        return count_by_class
