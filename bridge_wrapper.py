@@ -26,6 +26,7 @@ from deep_sort.tracker import Tracker
 from tracking_helpers import read_class_names, create_box_encoder
 from detection_helpers import *
 
+from torch.multiprocessing import Queue
 
  # load configuration for object detector
 config = ConfigProto()
@@ -195,3 +196,140 @@ class YOLOv7_DeepSORT:
         cv2.destroyAllWindows()
 
         return count_by_class
+
+
+    def track_queue(self, vid_queue:Queue, skip_frames:int=0, show_live:bool=True, count_objects:bool=False, verbose:int = 1):
+        '''
+        Track any given webcam or video
+        args: 
+            video: path to input video or set to 0 for webcam
+            output: path to output video
+            skip_frames: Skip every nth frame. After saving the video, it'll have very visuals experience due to skipped frames
+            show_live: Whether to show live video tracking. Press the key 'q' to quit
+            count_objects: count objects being tracked on screen
+            verbose: print details on the screen allowed values 0,1,2
+        '''
+        
+        # out = None
+        # if output: # get video ready to save locally if flag is set
+        #     width = 1280  # by default VideoCapture returns float instead of int
+        #     height = 720
+        #     fps = 30
+        #     codec = cv2.VideoWriter_fourcc(*"XVID")
+        #     out = cv2.VideoWriter(output, codec, fps, (width, height))
+
+        frame_num = 0
+
+        unique_track_ids={}
+        for _, cls in self.class_names.items():
+            unique_track_ids[cls]=set([])
+        print(unique_track_ids)
+
+        process_start = time.time()
+
+        while True: # while video is running
+            frame = vid_queue.get()
+            if frame is None: #no frame to process 
+                continue
+            if np.sum(frame)==0: # end of video, reset track ids and send count
+                count_by_class = dict(zip(self.class_names.values(), map(lambda cls: len(unique_track_ids[cls]), self.class_names.values())))
+                if verbose >= 1:
+                    with open('./IO_data/out.csv', 'a+') as f:
+                        f.write(str(count_by_class))
+                        
+                unique_track_ids={}
+                for _, cls in self.class_names.items():
+                    unique_track_ids[cls]=set([])
+                print("finished clip", flush=True)
+                continue
+            frame_num +=1
+
+            if skip_frames and not frame_num % skip_frames: continue # skip every nth frame. When every frame is not important, you can use this to fasten the process
+            if verbose >= 1:start_time = time.time()
+
+            # -----------------------------------------PUT ANY DETECTION MODEL HERE -----------------------------------------------------------------
+            yolo_dets = self.detector.detect(frame.copy(), plot_bb = False)  # Get the detections
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            if yolo_dets is None:
+                bboxes = []
+                scores = []
+                classes = []
+                num_objects = 0
+            
+            else:
+                bboxes = yolo_dets[:,:4]
+                bboxes[:,2] = bboxes[:,2] - bboxes[:,0] # convert from xyxy to xywh
+                bboxes[:,3] = bboxes[:,3] - bboxes[:,1]
+
+                scores = yolo_dets[:,4]
+                classes = yolo_dets[:,-1]
+                num_objects = bboxes.shape[0]
+            # ---------------------------------------- DETECTION PART COMPLETED ---------------------------------------------------------------------
+            
+            names = []
+            for i in range(num_objects): # loop through objects and use class index to get class name
+                class_indx = int(classes[i])
+                class_name = self.class_names[class_indx]
+                names.append(class_name)
+
+            names = np.array(names)
+            count = len(names)
+
+            if count_objects:
+                cv2.putText(frame, "Objects being tracked: {}".format(count), (5, 35), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.5, (0, 0, 0), 2)
+
+            # ---------------------------------- DeepSORT tacker work starts here ------------------------------------------------------------
+            features = self.encoder(frame, bboxes) # encode detections and feed to tracker. [No of BB / detections per frame, embed_size]
+            detections = [Detection(bbox, score, class_name, feature) for bbox, score, class_name, feature in zip(bboxes, scores, names, features)] # [No of BB per frame] deep_sort.detection.Detection object
+
+            cmap = plt.get_cmap('tab20b') #initialize color map
+            colors = [cmap(i)[:3] for i in np.linspace(0, 1, 20)]
+
+            boxs = np.array([d.tlwh for d in detections])  # run non-maxima supression below
+            scores = np.array([d.confidence for d in detections])
+            classes = np.array([d.class_name for d in detections])
+            indices = preprocessing.non_max_suppression(boxs, classes, self.nms_max_overlap, scores)
+            detections = [detections[i] for i in indices]       
+
+            self.tracker.predict()  # Call the tracker
+            self.tracker.update(detections) #  updtate using Kalman Gain
+
+            for track in self.tracker.tracks:  # update new findings AKA tracks
+                if not track.is_confirmed() or track.time_since_update > 1:
+                    continue 
+                bbox = track.to_tlbr()
+                class_name = track.get_class()
+
+                unique_track_ids[class_name].add(track.track_id)
+
+                color = colors[int(track.track_id) % len(colors)]  # draw bbox on screen
+                color = [i * 255 for i in color]
+                cv2.rectangle(frame, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), color, 2)
+                cv2.rectangle(frame, (int(bbox[0]), int(bbox[1]-30)), (int(bbox[0])+(len(class_name)+len(str(track.track_id)))*17, int(bbox[1])), color, -1)
+                cv2.putText(frame, class_name + " : " + str(track.track_id),(int(bbox[0]), int(bbox[1]-11)),0, 0.6, (255,255,255),1, lineType=cv2.LINE_AA)    
+                
+                
+                if verbose == 2:
+                    print("Tracker ID: {}, Class: {},  BBox Coords (xmin, ymin, xmax, ymax): {}".format(str(track.track_id), class_name, (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))))
+                    
+            # -------------------------------- Tracker work ENDS here -----------------------------------------------------------------------
+            if verbose >= 1:
+                fps = 1.0 / (time.time() - start_time) # calculate frames per second of running detections
+                if not count_objects: print(f"Processed frame no: {frame_num} || Current FPS: {round(fps,2)}")
+                else: print(f"Processed frame no: {frame_num} || Current FPS: {round(fps,2)} || Objects tracked: {count}")
+            
+            result = np.asarray(frame)
+            result = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            
+            # if output: out.write(result) # save output video
+
+            if show_live:
+                cv2.imshow("Output Video", result)
+                if cv2.waitKey(1) & 0xFF == ord('q'): break
+            
+                
+        
+
+
+        cv2.destroyAllWindows()
