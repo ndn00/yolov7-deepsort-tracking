@@ -57,8 +57,9 @@ class Detector:
         # Second-stage classifier
         self.classify = classify
         if classify:
-            self.modelc = load_classifier(name='resnet101', n=2)  # initialize
-            self.modelc.load_state_dict(torch.load('weights/resnet101.pt', map_location=self.device)['model']).to(self.device).eval()
+            self.modelc = load_classifier(name='inception_v3', n=3)  # initialize
+            self.modelc.load_state_dict(torch.load('weights/inception_traincomp.pt', map_location=self.device)['state_dict'])
+            self.modelc.to(self.device).eval()
 
          # Get names and colors of Colors for BB creation
         self.names = self.model.module.names if hasattr(self.model, 'module') else self.model.names
@@ -84,27 +85,41 @@ class Detector:
 
         # Apply NMS
         pred = non_max_suppression(pred, self.conf_thres, self.iou_thres, classes=self.classes, agnostic=self.agnostic_nms)
-
+        
         # Apply Classifier
         if self.classify:
-            pred = apply_classifier(pred, self.modelc, img, im0) # I thnk we need to add a new axis to im0
+            det2 = apply_classifier(pred, self.modelc, img, im0) # I thnk we need to add a new axis to im0
 
-
+        
         # Post - Process detections
         det = pred[0]# detections per image but as we have  just 1 image, it is the 0th index
+    
         if len(det):
             # Rescale boxes from img_size to im0 size
             det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
-
+            
             # Write results
             for *xyxy, conf, cls in reversed(det):
 
                 if plot_bb:  # Add bbox to image   # save_img
                     label = f'{self.names[int(cls)]} {conf:.2f}'
                     plot_one_box(xyxy, im0, label=label, color=self.colors[int(cls)], line_thickness=1)
+             
+            if self.classify:
+#                 if len(det2):
+#                     # Rescale boxes from img_size to im0 size
+#                     det2[:, :4] = scale_coords(img.shape[2:], det2[:, :4], im0.shape).round()
+#                     # Write results
+#                     for *xyxy, conf, cls in reversed(det2):
+
+#                         if plot_bb:  # Add bbox to image   # save_img
+#                             label = f'{self.names[int(cls)]} {conf:.2f}'
+#                             plot_one_box(xyxy, im0, label=label, color=self.colors[int(cls)], line_thickness=2)
                     
+                return det.detach().cpu().numpy(),None
         
-            return im0 if plot_bb else det.detach().cpu().numpy()
+            # return im0 if plot_bb else det.detach().cpu().numpy(), det2.detach().cpu().numpy()
+            return det.detach().cpu().numpy(), None
 
         return im0 if plot_bb else None # just in case there's no detection, return the original image. For tracking purpose plot_bb has to be False always
         

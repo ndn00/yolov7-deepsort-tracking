@@ -18,6 +18,7 @@ import torch
 import torchvision
 import yaml
 
+from PIL import Image
 from utils.google_utils import gsutil_getsize
 from utils.metrics import fitness
 from utils.torch_utils import init_torch_seeds
@@ -324,10 +325,12 @@ def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None):
     else:
         gain = ratio_pad[0][0]
         pad = ratio_pad[1]
-
+    # print(coords)
     coords[:, [0, 2]] -= pad[0]  # x padding
     coords[:, [1, 3]] -= pad[1]  # y padding
     coords[:, :4] /= gain
+    # print('preclip')
+    # print(coords)
     clip_coords(coords, img0_shape)
     return coords
 
@@ -742,12 +745,46 @@ def print_mutation(hyp, results, yaml_file='hyp_evolved.yaml', bucket=''):
         os.system('gsutil cp evolve.txt %s gs://%s' % (yaml_file, bucket))  # upload
 
 
+# def apply_classifier(x, model, img, im0):
+#     # applies a second stage classifier to yolo outputs
+#     im0 = [im0] if isinstance(im0, np.ndarray) else im0
+#     for i, d in enumerate(x):  # per image
+#         if d is not None and len(d):
+#             d = d.clone()
+
+#             # Reshape and pad cutouts
+#             b = xyxy2xywh(d[:, :4])  # boxes
+#             b[:, 2:] = b[:, 2:].max(1)[0].unsqueeze(1)  # rectangle to square
+#             b[:, 2:] = b[:, 2:] * 1.3 + 30  # pad
+#             d[:, :4] = xywh2xyxy(b).long()
+
+#             # Rescale boxes from img_size to im0 size
+#             scale_coords(img.shape[2:], d[:, :4], im0[i].shape)
+
+#             # Classes
+#             pred_cls1 = d[:, 5].long()
+#             ims = []
+#             for j, a in enumerate(d):  # per item
+#                 cutout = im0[i][int(a[1]):int(a[3]), int(a[0]):int(a[2])]
+#                 im = cv2.resize(cutout, (224, 224))  # BGR
+#                 # cv2.imwrite('test%i.jpg' % j, cutout)
+
+#                 im = im[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
+#                 im = np.ascontiguousarray(im, dtype=np.float32)  # uint8 to float32
+#                 im /= 255.0  # 0 - 255 to 0.0 - 1.0
+#                 ims.append(im)
+
+#             pred_cls2 = model(torch.Tensor(ims).to(d.device)).argmax(1)  # classifier prediction
+#             x[i] = x[i][pred_cls1 == pred_cls2]  # retain matching class detections
+
+#     return x
+
 def apply_classifier(x, model, img, im0):
     # applies a second stage classifier to yolo outputs
     im0 = [im0] if isinstance(im0, np.ndarray) else im0
-    for i, d in enumerate(x):  # per image
-        if d is not None and len(d):
-            d = d.clone()
+    for i, det in enumerate(x):  # per image
+        if det is not None and len(det):
+            d = det.clone()
 
             # Reshape and pad cutouts
             b = xyxy2xywh(d[:, :4])  # boxes
@@ -762,20 +799,35 @@ def apply_classifier(x, model, img, im0):
             pred_cls1 = d[:, 5].long()
             ims = []
             for j, a in enumerate(d):  # per item
-                cutout = im0[i][int(a[1]):int(a[3]), int(a[0]):int(a[2])]
-                im = cv2.resize(cutout, (224, 224))  # BGR
-                # cv2.imwrite('test%i.jpg' % j, cutout)
+                im = im0[i][int(a[1]):int(a[3]), int(a[0]):int(a[2])]
+                # im = cv2.resize(cutout, (224, 224))  # BGR
+                cv2.imwrite('test%i.jpg' % j, im)
+                im = im[:, :, ::-1]  # BGR to RGB
+                im = np.ascontiguousarray(im)  # uint8 to float32
+                
+                preprocess = torchvision.transforms.Compose([
+                                torchvision.transforms.ToTensor(),
+                                torchvision.transforms.Resize(size=299),
+                                torchvision.transforms.CenterCrop(size=299),
+                                torchvision.transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+                ims.append(preprocess(im))
+                torchvision.transforms.ToPILImage()(preprocess(im).to('cpu')).save('transform%i.jpg' % j)
 
-                im = im[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
-                im = np.ascontiguousarray(im, dtype=np.float32)  # uint8 to float32
-                im /= 255.0  # 0 - 255 to 0.0 - 1.0
-                ims.append(im)
+            output = model(torch.stack(ims).to(d.device))  # classifier prediction
+            
+            tmax, pred_cls2 = torch.max(output, dim=1)
+            prob = torch.exp(tmax)
+            # d2 = det.clone()
+            
+            print(det[:, 5][prob>0.7])
+            print(pred_cls2[prob>0.7])
+            det[:, 5] +=3 # traincar
+            det[:, 5][prob>0.7] = pred_cls2[prob>0.7].float()
+            print(det)
+            # print(det)
+            # return d2
 
-            pred_cls2 = model(torch.Tensor(ims).to(d.device)).argmax(1)  # classifier prediction
-            x[i] = x[i][pred_cls1 == pred_cls2]  # retain matching class detections
-
-    return x
-
+    return None
 
 def increment_path(path, exist_ok=True, sep=''):
     # Increment path, i.e. runs/exp --> runs/exp{sep}0, runs/exp{sep}1 etc.

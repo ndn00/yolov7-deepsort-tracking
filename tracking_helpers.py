@@ -244,7 +244,7 @@ def read_class_names():
     '''
     Raad COCO classes names 
     '''
-    classes = ['canpotex', 'potash', 'agrium']
+    classes = ['agrium', 'canpotex', 'potash', 'traincar']
     
     return dict(zip(range(len(classes)), classes))
 

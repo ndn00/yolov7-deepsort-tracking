@@ -100,11 +100,11 @@ class YOLOv7_DeepSORT:
 
             if skip_frames and not frame_num % skip_frames: continue # skip every nth frame. When every frame is not important, you can use this to fasten the process
             if verbose >= 1:start_time = time.time()
-
+            
             # -----------------------------------------PUT ANY DETECTION MODEL HERE -----------------------------------------------------------------
-            yolo_dets = self.detector.detect(frame.copy(), plot_bb = False)  # Get the detections
+            yolo_dets, _ = self.detector.detect(frame.copy(), plot_bb = False)  # Get the detections
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
+            # yolo_dets[:,-1] += 3 # change traincar class to 3
             if yolo_dets is None:
                 bboxes = []
                 scores = []
@@ -112,7 +112,14 @@ class YOLOv7_DeepSORT:
                 num_objects = 0
             
             else:
-                bboxes = yolo_dets[:,:4]
+#                 bboxes = np.concatenate((yolo_dets[:,:4], incep_dets[:,:4]), axis=0)
+#                 bboxes[:,2] = bboxes[:,2] - bboxes[:,0] # convert from xyxy to xywh
+#                 bboxes[:,3] = bboxes[:,3] - bboxes[:,1]
+
+#                 scores = np.concatenate((yolo_dets[:,4], incep_dets[:,4]), axis=0)
+#                 classes = np.concatenate((yolo_dets[:,-1], yolo_dets[:,-1]), axis=0)
+
+                bboxes = yolo_dets[:,:4] 
                 bboxes[:,2] = bboxes[:,2] - bboxes[:,0] # convert from xyxy to xywh
                 bboxes[:,3] = bboxes[:,3] - bboxes[:,1]
 
@@ -258,7 +265,7 @@ class YOLOv7_DeepSORT:
                 num_objects = 0
             
             else:
-                bboxes = yolo_dets[:,:4]
+                bboxes = yolo_dets[:,:4] 
                 bboxes[:,2] = bboxes[:,2] - bboxes[:,0] # convert from xyxy to xywh
                 bboxes[:,3] = bboxes[:,3] - bboxes[:,1]
 
