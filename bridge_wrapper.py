@@ -131,7 +131,7 @@ class YOLOv7_DeepSORT:
             count = len(names)
 
             if count_objects:
-                cv2.putText(frame, "Objects being tracked: {}".format(count), (5, 35), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1.5, (0, 0, 0), 2)
+                cv2.putText(frame, "Objects being tracked: {}".format(count), (5, 35), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (0, 0, 0), 2)
 
             # ---------------------------------- DeepSORT tacker work starts here ------------------------------------------------------------
             features = self.encoder(frame, bboxes) # encode detections and feed to tracker. [No of BB / detections per frame, embed_size]
@@ -156,6 +156,12 @@ class YOLOv7_DeepSORT:
                 class_name = track.get_class()
 
                 unique_track_ids[class_name].add(track.track_id)
+                count_by_class = dict(zip(self.class_names.values(), map(lambda cls: len(unique_track_ids[cls]), self.class_names.values())))
+                
+                offset = 25
+                for cls in self.class_names.values():     
+                    cv2.putText(frame, "{}: {}".format(cls, count_by_class[cls]), (5, 35+offset), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (0, 0, 0), 2)
+                    offset += 25
 
                 color = colors[int(track.track_id) % len(colors)]  # draw bbox on screen
                 color = [i * 255 for i in color]
